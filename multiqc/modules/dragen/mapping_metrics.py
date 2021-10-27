@@ -44,9 +44,10 @@ class DragenMappingMetics(BaseMultiqcModule):
 
         # flattening phenotype-sample data by adding a prefix " normal" to the normal samples
         data_by_sample = dict()
-        for sn in data_by_phenotype_by_sample:
-            for phenotype in data_by_phenotype_by_sample[sn]:
-                data_by_sample[sn] = data_by_phenotype_by_sample[sn][phenotype]
+        for sbj in data_by_rg_by_sample:
+            for sn, sample_data in data_by_rg_by_sample[sbj].items():
+                phenotype = sample_data['phenotype']
+                data_by_sample[sn] = data_by_phenotype_by_sample[sbj][phenotype]
 
         # flattening phenotype-sample data by adding a prefix " normal" to the normal samples
         data_by_rg_by_sample_new = dict()
