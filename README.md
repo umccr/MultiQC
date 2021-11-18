@@ -1,4 +1,15 @@
 # ![MultiQC](https://raw.githubusercontent.com/ewels/MultiQC/master/docs/images/MultiQC_logo.png)
+&nbsp;
+
+<h3 align='center'>This UMCCR fork+branch contains changes specific to umccrise</h3>
+This branch contains MultiQC code obtained from umccrise 1.2.1 and is used as a temporary solution to maintain compatibility
+between umccrise versions targeting bcbio data on AWS. The MultiQC code used in umccrise 1.2.1 is not available from the
+original GitHub repo (or anywhere else), and so there is no git history attached to this branch.
+
+&nbsp;
+
+---
+
 
 ### Aggregate bioinformatics results across many samples into a single report
 
