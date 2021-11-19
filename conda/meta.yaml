@@ -16,10 +16,10 @@ build:
 
 requirements:
   host:
-    - python >=3.6
+    - python >=3.6,<3.9
     - pip
   run:
-    - python >=3.6
+    - python >=3.6,<3.9
     - setuptools
     - click
     - coloredlogs
@@ -28,7 +28,7 @@ requirements:
     - lzstring
     - markdown
     - matplotlib-base >=2.1.1
-    - networkx >=2.5.1
+    - networkx
     - numpy
     - pyyaml >=4
     - requests
