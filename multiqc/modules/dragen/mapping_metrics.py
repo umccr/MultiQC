@@ -1,7 +1,6 @@
 # coding=utf-8
 
 
-import itertools
 import logging
 import re
 from collections import defaultdict
@@ -20,83 +19,46 @@ NAMESPACE = "DRAGEN mapping"
 
 class DragenMappingMetics(BaseMultiqcModule):
     def add_mapping_metrics(self):
-        data_by_rg_by_sample = defaultdict(dict)
-        data_by_phenotype_by_sample = defaultdict(dict)
+        data_by_sample = defaultdict(dict)
+        data_by_readgroup = defaultdict(dict)
 
         for f in self.find_log_files("dragen/mapping_metrics"):
-            s_name, data_by_readgroup, data_by_phenotype = parse_mapping_metrics_file(f)
-            s_name = self.clean_s_name(s_name, f)
+            f_data_by_sample, f_data_by_readgroup = parse_mapping_metrics_file(f)
+            # Merge sample data
+            for sample, data in f_data_by_sample.items():
+                if sample in data_by_sample:
+                    log.debug(f'Duplicate DRAGEN sample found in mapping metrics! Overwriting: {sample}')
+                data_by_sample[sample] = data
+            # Merge readgroup data
+            for readgroup, data in f_data_by_readgroup.items():
+                if readgroup in data_by_readgroup:
+                    log.debug(f'Duplicate DRAGEN readgroup found in mapping metrics! Overwriting: {readgroup}')
+                data_by_readgroup[readgroup] = data
 
-            if s_name in data_by_rg_by_sample:
-                log.debug(f"Duplicate DRAGEN output prefix found! Overwriting: {s_name}")
-            self.add_data_source(f, section="stats")
-            data_by_phenotype_by_sample[s_name].update(data_by_phenotype)
+            # Remove samples in ignore list
+        data_by_sample = self.ignore_samples(data_by_sample)
+        data_by_readgroup = self.ignore_samples(data_by_readgroup)
 
-            for phenotype, phenotype_d in data_by_readgroup.items():
-                for rg, data in phenotype_d.items():
-                    if any(rg in d_rg for sn, d_rg in data_by_rg_by_sample.items()):
-                        log.debug(f"Duplicate read group name {rg} found for output prefix {s_name}! Overwriting")
-            data_by_rg_by_sample[s_name].update(data_by_readgroup)
-
-        # filter to strip out ignored sample names:
-        data_by_rg_by_sample = self.ignore_samples(data_by_rg_by_sample)
-        data_by_phenotype_by_sample = self.ignore_samples(data_by_phenotype_by_sample)
-
-        # flattening phenotype-sample data by adding a prefix " normal" to the normal samples
-        data_by_sample = dict()
-        for sn in data_by_phenotype_by_sample:
-            for phenotype in data_by_phenotype_by_sample[sn]:
-                new_sn = sn
-                if phenotype == "normal":
-                    new_sn = sn + "_normal"
-                data_by_sample[new_sn] = data_by_phenotype_by_sample[sn][phenotype]
-
-        # flattening phenotype-sample data by adding a prefix " normal" to the normal samples
-        data_by_rg_by_sample_new = dict()
-        for sn in data_by_rg_by_sample:
-            for phenotype in data_by_rg_by_sample[sn]:
-                new_sn = sn
-                if phenotype == "normal":
-                    new_sn = sn + "_normal"
-                data_by_rg_by_sample_new[new_sn] = data_by_rg_by_sample[sn][phenotype]
-        data_by_rg_by_sample = data_by_rg_by_sample_new
-        del data_by_rg_by_sample_new
-
-        if not data_by_rg_by_sample and not data_by_phenotype_by_sample:
+        # Check for empty result before proceeding
+        if not data_by_sample and not data_by_readgroup:
             return set()
 
-        # Write data to file
-        self.write_data_file(data_by_sample, "dragen_map_metrics")
+        # Write sample data to file
+        self.write_data_file(data_by_sample, 'dragen_mapping_metrics_sample')
+        self.write_data_file(data_by_readgroup, 'dragen_mapping_metrics_readgroup')
 
-        self.report_mapping_metrics(data_by_sample, data_by_rg_by_sample)
+        # Report metrics and return sample names
+        self.report_mapping_metrics(data_by_sample, data_by_readgroup)
+        return data_by_sample.keys()
 
-        return data_by_rg_by_sample.keys()
+    def report_mapping_metrics(self, data_by_sample, data_by_readgroup):
+        # Get a complete list of all available metrics
+        metrics = set()
+        for d in data_by_readgroup.values():
+            metrics.update(d.keys())
 
-    def report_mapping_metrics(self, data_by_sample, data_by_rg_by_sample):
-        # merging all read group data
-        data_by_rg = dict()
-
-        for sname in data_by_rg_by_sample:
-            for rg, d in data_by_rg_by_sample[sname].items():
-                # Check only one read-group per sample
-                if len(list(data_by_rg_by_sample[sname].keys())) == 1:
-                    rg = sname
-                    data_by_rg[rg] = d
-                    continue
-
-                # Multiple read-groups per sample
-                rg = sname + f" ({rg}) "
-                data_by_rg[rg] = d
-
-        # getting all available metric names to determine table headers
-        all_metric_names = set()
-        for sn, d_by_rg in data_by_rg_by_sample.items():
-            for rg, data in d_by_rg.items():
-                for m in data.keys():
-                    all_metric_names.add(m)
-        # and making headers
-        genstats_headers, own_tabl_headers = make_headers(all_metric_names, MAPPING_METRICS)
-
+        # Create headers and table
+        genstats_headers, own_tabl_headers = make_headers(metrics, MAPPING_METRICS)
         self.general_stats_addcols(data_by_sample, genstats_headers, namespace=NAMESPACE)
 
         self.add_section(
@@ -107,14 +69,14 @@ class DragenMappingMetics(BaseMultiqcModule):
             Shown on per read group level. To see per-sample level metrics, refer to the general
             stats table.
             """,
-            plot=table.plot(data_by_rg, own_tabl_headers, pconfig={"namespace": NAMESPACE}),
+            plot=table.plot(data_by_readgroup, own_tabl_headers, pconfig={"namespace": NAMESPACE}),
         )
 
         # Skip adding the barplot if it's not informative, such as if all
         #  reads are unmapped due to a FastQcOnly workflow
         all_unmapped = True
         unmapped_key = "Unmapped reads pct"
-        for rg, data in data_by_rg.items():
+        for rg, data in data_by_readgroup.items():
             if unmapped_key in data and data[unmapped_key] < 100.0:
                 all_unmapped = False
 
@@ -122,7 +84,7 @@ class DragenMappingMetics(BaseMultiqcModule):
             return set()
 
         # Make bargraph plots of mapped, dupped and paired reads
-        self.__map_pair_dup_read_chart(data_by_rg)
+        self.__map_pair_dup_read_chart(data_by_readgroup)
 
     def __map_pair_dup_read_chart(self, data_by_sample):
         paired_reads_data = {}
@@ -364,24 +326,19 @@ def parse_mapping_metrics_file(f):
 
     s_name = re.search(r"(.*)\.mapping_metrics.csv", f["fn"]).group(1)
 
+    data_by_sample = defaultdict(dict)
     data_by_readgroup = defaultdict(dict)
     data_by_phenotype = defaultdict(dict)
 
+    phenotype_sample_name_map = defaultdict(dict)
     for line in f["f"].splitlines():
         fields = line.split(",")
         phenotype = fields[0].split("/")[0].split(" ")[0].lower()  # TUMOR MAPPING -> tumor
         analysis = fields[0].split("/")[1]  # ALIGNING SUMMARY, ALIGNING PER RG
         metric = fields[2]
-        value = fields[3] if fields[3] != "NA" else None
-        try:
-            value = int(value)
-        except (ValueError, TypeError):
-            try:
-                value = float(value)
-            except (ValueError, TypeError):
-                pass
-
+        value = fields[3]
         percentage = None
+
         if len(fields) > 4:  # percentage
             percentage = fields[4]
             try:
@@ -389,53 +346,126 @@ def parse_mapping_metrics_file(f):
             except ValueError:
                 pass
 
+        if value == "NA":
+            continue
+
         # sample-unspecific metrics are reported only in ALIGNING SUMMARY sections
         if analysis == "ALIGNING SUMMARY":
-            if value is not None:
-                data_by_phenotype[phenotype][metric] = value
+            data_by_phenotype[phenotype][metric] = prepare_value(value)
             if percentage is not None:
-                data_by_phenotype[phenotype][metric + " pct"] = percentage
+                data_by_phenotype[phenotype][metric + " pct"] = prepare_value(percentage)
 
         # for sample-specific metrics, using ALIGNING PER RG because it has the sample name in the 2nd col
         if analysis == "ALIGNING PER RG":
-            # setting normal and tumor sample names for future use
             readgroup = fields[1]
-            if readgroup not in data_by_readgroup[phenotype].keys():
-                data_by_readgroup[phenotype][readgroup] = {}
-            if value is not None:
-                data_by_readgroup[phenotype][readgroup][metric] = value
+            # Gather identifiers
+            re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', readgroup)
+            if re_result.group(2) is not None:
+                identifier = f'{re_result.group(1)} ({re_result.group(2)})'
+            else:
+                identifier = f'{re_result.group(1)}'
+
+            # Get sample name that is associated with phenotype so we can later organise summary
+            # data by sample name
+            if phenotype not in phenotype_sample_name_map.keys():
+                sample_name = re_result.group(1)
+                phenotype_sample_name_map[phenotype] = sample_name
+
+            # Resume processing as normal
+            data_by_readgroup[identifier][metric] = prepare_value(value)
             if percentage is not None:
-                data_by_readgroup[phenotype][readgroup][metric + " pct"] = percentage
+                data_by_readgroup[identifier][metric + " pct"] = prepare_value(percentage)
 
-    # adding some missing values that we wanna report for consistency
-    # Expand data_by_readgroup to values below phenotype level
-    for data in itertools.chain(
-        *[data_by_readgroup[key].values() for key in data_by_readgroup.keys()], data_by_phenotype.values()
-    ):
-        # fixing when deduplication wasn't performed, or running with single-end data
-        for field in [
-            "Number of duplicate marked and mate reads removed",
-            "Number of unique reads (excl. duplicate marked reads)",
-            "Mismatched bases R2 (excl. indels)",
-            "Mismatched bases R2",
-            "Soft-clipped bases R2",
-        ]:
-            try:
-                data.pop(field)
-            except KeyError:
-                pass
-
-        # adding alignment percentages
-        if exist_and_number(data, "Total alignments", "Secondary alignments") and data["Total alignments"] > 0:
-            data["Secondary alignments pct"] = data["Secondary alignments"] / data["Total alignments"] * 100.0
-
-        # adding some missing bases percentages
-        if exist_and_number(data, "Total bases") and data["Total bases"] > 0:
-            for m in ["Q30 bases (excl. dups & clipped bases)", "Mapped bases R1", "Mapped bases R2"]:
+    # Organise summary data by sample
+    for phenotype, data in data_by_phenotype.items():
+        sample_name = phenotype_sample_name_map[phenotype]
+        assert sample_name not in data_by_sample
+        data_by_sample[sample_name] = data
+    #
+    # line_token_gen = (line.split(',') for line in f.get('f').splitlines())
+    # for line_tokens in line_token_gen:
+    #     # Get section information
+    #     section_desc = line_tokens[0]
+    #     section_desc_re = r'^(TUMOR|NORMAL) MAPPING/ALIGNING (?:PER )?(RG|SUMMARY)$'
+    #     re_result = re.search(section_desc_re, section_desc)
+    #     if not re_result:
+    #         raise ValueError(f'could not get section info from {section_desc}')
+    #     phenotype = re_result.group(1).lower()
+    #     stype = re_result.group(2).lower()
+    #
+    #     # Process section entry as required
+    #     # NOTE(SW): field number is variable and some entries have an additional percentage value
+    #     # while others do not
+    #     value_name = line_tokens[2]
+    #     if stype == 'summary':
+    #         data_by_phenotype[phenotype][value_name] = prepare_value(line_tokens[3])
+    #         if len(line_tokens) > 4:
+    #             data_by_phenotype[phenotype][f'{value_name} pct'] = prepare_value(line_tokens[4])
+    #     elif stype == 'rg':
+    #         # Gather identifiers
+    #         identifiers = line_tokens[1]
+    #         re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', identifiers)
+    #         if not re_result:
+    #             print(line_tokens)
+    #             print(identifiers)
+    #             raise ValueError(f'could not get sample name from {identifiers}')
+    #         if re_result.group(2) is not None:
+    #             identifier = f'{re_result.group(1)} ({re_result.group(2)})'
+    #         else:
+    #             identifier = f'{re_result.group(1)}'
+    #         # Get sample name that is associated with phenotype so we can later organise summary
+    #         # data by sample name
+    #         if phenotype not in phenotype_sample_name_map:
+    #             sample_name = re_result.group(1)
+    #             phenotype_sample_name_map[phenotype] = sample_name
+    #         # Resume processing as normal
+    #         data_by_readgroup[identifier][value_name] = prepare_value(line_tokens[3])
+    #         if len(line_tokens) > 4:
+    #             data_by_readgroup[identifier][f'{value_name} pct'] = prepare_value(line_tokens[4])
+    #     else:
+    #         raise ValueError(f'got bad section type: {stype}')
+    #
+    # # Organise summary data by sample
+    # for phenotype, data in data_by_phenotype.items():
+    #     sample_name = phenotype_sample_name_map[phenotype]
+    #     assert sample_name not in data_by_sample
+    #     data_by_sample[sample_name] = data
+    #
+    # Modify data; removing (unnecessary? broken?) fields, add percentages
+    fields_remove = (
+        'Number of duplicate marked and mate reads removed',
+        'Number of unique reads (excl. duplicate marked reads)',
+        'Mismatched bases R2 (excl. indels)',
+        'Mismatched bases R2',
+        'Soft-clipped bases R2',
+    )
+    for data in (*data_by_readgroup.values(), *data_by_sample.values()):
+        # Remove fields
+        # NOTE(SW): not immediately clear why this is done
+        for field in fields_remove:
+            if field not in data:
+                continue
+            del data[field]
+        # Add alignment percentages
+        if exist_and_number(data, 'Total alignments', 'Secondary alignments') and data['Total alignments'] > 0:
+            data['Secondary alignments pct'] = data['Secondary alignments'] / data['Total alignments'] * 100.0
+        # Add some missing bases percentages
+        if exist_and_number(data, 'Total bases') and data['Total bases'] > 0:
+            for m in ['Q30 bases (excl. dups & clipped bases)', 'Mapped bases R1', 'Mapped bases R2']:
                 if exist_and_number(data, m):
-                    data[m + " pct"] = data[m] / data["Total bases"] * 100.0
+                    data[m + ' pct'] = data[m] / data['Total bases'] * 100.0
+    return data_by_sample, data_by_readgroup
 
-    return s_name, data_by_readgroup, data_by_phenotype
+
+def prepare_value(value_str):
+    try:
+        return int(value_str)
+    except ValueError:
+        pass
+    try:
+        return float(value_str)
+    except ValueError:
+        return value_str
 
 
 MAPPING_METRICS = [
@@ -450,14 +480,6 @@ MAPPING_METRICS = [
         "Total number of input reads for this sample (or total number of reads in all input read groups combined), {}",
     ),
     Metric("Total reads in RG", "Input reads", None, "#", "reads", "Total number of reads in this RG, {}"),
-    Metric(
-        "Average sequenced coverage over genome",
-        "Raw depth",
-        "hid",
-        "#",
-        "x",
-        "Average sequenced coverage over genome, based on all input reads (including duplicate, clipped and low quality bases and reads)",
-    ),
     Metric("Reads with mate sequenced", "Paired", "hid", "%", "reads", "Number of reads with a mate sequenced, {}"),
     Metric(
         "Reads without mate sequenced",

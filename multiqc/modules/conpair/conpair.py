@@ -75,7 +75,7 @@ class MultiqcModule(BaseMultiqcModule):
         def _cp_type(data):
             if "concordance_concordance" in parsed_data:
                 return "concordance"
-            elif "contamination_normal" in parsed_data:
+            elif "contamination" in parsed_data:
                 return "contamination"
 
         if len(parsed_data) > 0:
@@ -100,9 +100,9 @@ class MultiqcModule(BaseMultiqcModule):
             "format": "{:,.2f}",
             "scale": "RdYlGn",
         }
-        headers["contamination_normal"] = {
-            "title": "N Contamination",
-            "description": "Normal sample contamination level",
+        headers["contamination"] = {
+            "title": "Contamination",
+            "description": "Sample contamination level",
             "max": 100,
             "min": 0,
             "suffix": "%",

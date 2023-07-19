@@ -13,7 +13,9 @@ if config.base_count_multiplier == 1:
 elif config.base_count_multiplier == 0.000000001:
     base_format = "{:,.2f}"
 # base_format += '&nbsp;' + config.base_count_prefix
+import logging
 
+log = logging.getLogger(__name__)
 
 class Metric:
     def __init__(
