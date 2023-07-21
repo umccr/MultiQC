@@ -1,4 +1,4 @@
- # coding=utf-8
+# coding=utf-8
 
 
 import itertools
@@ -101,7 +101,7 @@ METRICS = [
         precision=2,
     ),
     Metric(
-        "PCT of genome with coverage [  1x: inf)",
+        "PCT of genome with coverage [   1x: inf)",
         "⩾1x",
         "hid",
         "#",
@@ -109,7 +109,7 @@ METRICS = [
         "Percentage of sites in region with at least 1x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [  3x: inf)",
+        "PCT of genome with coverage [   3x: inf)",
         "⩾3x",
         None,
         "hid",
@@ -117,7 +117,7 @@ METRICS = [
         "Percentage of sites in region with at least 3x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 10x: inf)",
+        "PCT of genome with coverage [  10x: inf)",
         "⩾10x",
         None,
         "#",
@@ -125,7 +125,7 @@ METRICS = [
         "Percentage of sites in region with at least 10x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 15x: inf)",
+        "PCT of genome with coverage [  15x: inf)",
         "⩾15x",
         None,
         "hid",
@@ -133,7 +133,7 @@ METRICS = [
         "Percentage of sites in region with at least 15x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 20x: inf)",
+        "PCT of genome with coverage [  20x: inf)",
         "⩾20x",
         "#",
         "#",
@@ -141,7 +141,7 @@ METRICS = [
         "Percentage of sites in region with at least 20x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 50x: inf)",
+        "PCT of genome with coverage [  50x: inf)",
         "⩾50x",
         "hid",
         "#",
@@ -149,7 +149,7 @@ METRICS = [
         "Percentage of sites in region with at least 50x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [100x: inf)",
+        "PCT of genome with coverage [ 100x: inf)",
         "⩾100x",
         "hid",
         "#",
@@ -157,7 +157,7 @@ METRICS = [
         "Percentage of sites in region with at least 100x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [  0x:  1x)",
+        "PCT of genome with coverage [   0x:   1x)",
         "0x",
         None,
         "hid",
@@ -165,7 +165,7 @@ METRICS = [
         "Percentage of sites in region with no coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [  1x:  3x)",
+        "PCT of genome with coverage [   1x:   3x)",
         "1x..3x",
         None,
         "hid",
@@ -173,7 +173,7 @@ METRICS = [
         "Percentage of sites in region with at least 1x but less than 3x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [  3x: 10x)",
+        "PCT of genome with coverage [   3x:  10x)",
         "3x..10x",
         None,
         "hid",
@@ -181,7 +181,7 @@ METRICS = [
         "Percentage of sites in region with at least 3x but less than 10x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 10x: 15x)",
+        "PCT of genome with coverage [  10x:  15x)",
         "10x..15x",
         None,
         "hid",
@@ -189,7 +189,7 @@ METRICS = [
         "Percentage of sites in region with at least 10x but less than 15x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 15x: 20x)",
+        "PCT of genome with coverage [  15x:  20x)",
         "15x..20x",
         None,
         "hid",
@@ -197,7 +197,7 @@ METRICS = [
         "Percentage of sites in region with at least 15x but less than 20x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 20x: 50x)",
+        "PCT of genome with coverage [  20x:  50x)",
         "20x..50x",
         "hid",
         "hid",
@@ -205,7 +205,7 @@ METRICS = [
         "Percentage of sites in region with at least 20x but less than 50x coverage.",
     ),
     Metric(
-        "PCT of genome with coverage [ 50x:100x)",
+        "PCT of genome with coverage [  50x: 100x)",
         "50x..100x",
         "hid",
         "hid",
@@ -407,6 +407,18 @@ def parse_wgs_coverage_metrics(f, file_regex):
     for line in f["f"].splitlines():
         fields = line.split(",")
         metric = fields[2]
+        # AL - Hot fix to handle when dragen has zfill of 4 instead of 3
+        if metric.startswith("PCT of genome with coverage"):
+            metric_regex_match = re.match(r"PCT of genome with coverage \[(?:\s+)?(\d+)x:(?:\s+)?(inf|\d+x)", metric)
+            # Dragen v4 went to 1000X which bumped everything off slightly
+            if metric_regex_match is not None:
+                start_int_as_str = "%4d" % int(metric_regex_match.group(1))
+                end_int_or_inf = metric_regex_match.group(2)
+                if not end_int_or_inf == "inf":
+                    end_int_or_inf = "%4d" % int(end_int_or_inf.rstrip("x")) + "x"
+                else:
+                    end_int_or_inf = " inf"
+                metric = f"PCT of genome with coverage [{start_int_as_str}x:{end_int_or_inf})"
         value = fields[3]
         try:
             value = int(value)

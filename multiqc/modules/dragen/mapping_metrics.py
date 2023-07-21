@@ -1,14 +1,14 @@
-#!/usr/bin/env python
-import collections
+# coding=utf-8
+
+
 import logging
 import re
+from collections import defaultdict
 
-import multiqc.modules.base_module
-import multiqc.plots
-import multiqc.utils
+from multiqc.modules.base_module import BaseMultiqcModule
+from multiqc.plots import bargraph, table
 
-from . import utils
-
+from .utils import Metric, exist_and_number, make_headers
 
 # Initialise the logger
 log = logging.getLogger(__name__)
@@ -17,51 +17,50 @@ log = logging.getLogger(__name__)
 NAMESPACE = "DRAGEN mapping"
 
 
-class DragenMappingMetics(multiqc.modules.base_module.BaseMultiqcModule):
-
+class DragenMappingMetics(BaseMultiqcModule):
     def add_mapping_metrics(self):
-        # Process each mapping metrics file and merge results
-        data_sample = dict()
-        data_readgroup = dict()
-        for f in self.find_log_files("dragen/mapping_metrics"):
-            f_data_sample, f_data_readgroup = parse_mapping_metrics_file(f)
-            # Merge sample data
-            for sample, data in f_data_sample.items():
-                if sample in data_sample:
-                    log.debug(f'Duplicate DRAGEN sample found in mapping metrics! Overwriting: {sample}')
-                data_sample[sample] = data
-            # Merge readgroup data
-            for readgroup, data in f_data_readgroup.items():
-                if readgroup in data_readgroup:
-                    log.debug(f'Duplicate DRAGEN readgroup found in mapping metrics! Overwriting: {readgroup}')
-                data_readgroup[readgroup] = data
+        data_by_sample = defaultdict(dict)
+        data_by_readgroup = defaultdict(dict)
 
-        # Remove samples in ignore list
-        data_sample = self.ignore_samples(data_sample)
-        data_readgroup = self.ignore_samples(data_readgroup)
+        for f in self.find_log_files("dragen/mapping_metrics"):
+            f_data_by_sample, f_data_by_readgroup = parse_mapping_metrics_file(f)
+            # Merge sample data
+            for sample, data in f_data_by_sample.items():
+                if sample in data_by_sample:
+                    log.debug(f'Duplicate DRAGEN sample found in mapping metrics! Overwriting: {sample}')
+                data_by_sample[sample] = data
+            # Merge readgroup data
+            for readgroup, data in f_data_by_readgroup.items():
+                if readgroup in data_by_readgroup:
+                    log.debug(f'Duplicate DRAGEN readgroup found in mapping metrics! Overwriting: {readgroup}')
+                data_by_readgroup[readgroup] = data
+
+            # Remove samples in ignore list
+        data_by_sample = self.ignore_samples(data_by_sample)
+        data_by_readgroup = self.ignore_samples(data_by_readgroup)
 
         # Check for empty result before proceeding
-        if not data_sample and not data_readgroup:
+        if not data_by_sample and not data_by_readgroup:
             return set()
 
         # Write sample data to file
-        self.write_data_file(data_sample, 'dragen_mapping_metrics_sample')
-        self.write_data_file(data_readgroup, 'dragen_mapping_metrics_readgroup')
+        self.write_data_file(data_by_sample, 'dragen_mapping_metrics_sample')
+        self.write_data_file(data_by_readgroup, 'dragen_mapping_metrics_readgroup')
 
         # Report metrics and return sample names
-        self.report_mapping_metrics(data_sample, data_readgroup)
-        return data_sample.keys()
+        self.report_mapping_metrics(data_by_sample, data_by_readgroup)
+        return data_by_sample.keys()
 
-
-    def report_mapping_metrics(self, data_sample, data_readgroup):
+    def report_mapping_metrics(self, data_by_sample, data_by_readgroup):
         # Get a complete list of all available metrics
         metrics = set()
-        for d in data_readgroup.values():
+        for d in data_by_readgroup.values():
             metrics.update(d.keys())
 
         # Create headers and table
-        genstats_headers, own_tabl_headers = utils.make_headers(metrics, MAPPING_METRICS)
-        self.general_stats_addcols(data_sample, genstats_headers, namespace=NAMESPACE)
+        genstats_headers, own_tabl_headers = make_headers(metrics, MAPPING_METRICS)
+        self.general_stats_addcols(data_by_sample, genstats_headers, namespace=NAMESPACE)
+
         self.add_section(
             name="Mapping metrics",
             anchor="dragen-mapping-metrics",
@@ -70,14 +69,14 @@ class DragenMappingMetics(multiqc.modules.base_module.BaseMultiqcModule):
             Shown on per read group level. To see per-sample level metrics, refer to the general
             stats table.
             """,
-            plot=multiqc.plots.table.plot(data_readgroup, own_tabl_headers, pconfig={"namespace": NAMESPACE}),
+            plot=table.plot(data_by_readgroup, own_tabl_headers, pconfig={"namespace": NAMESPACE}),
         )
 
         # Skip adding the barplot if it's not informative, such as if all
         #  reads are unmapped due to a FastQcOnly workflow
         all_unmapped = True
         unmapped_key = "Unmapped reads pct"
-        for rg, data in data_readgroup.items():
+        for rg, data in data_by_readgroup.items():
             if unmapped_key in data and data[unmapped_key] < 100.0:
                 all_unmapped = False
 
@@ -85,8 +84,7 @@ class DragenMappingMetics(multiqc.modules.base_module.BaseMultiqcModule):
             return set()
 
         # Make bargraph plots of mapped, dupped and paired reads
-        self.__map_pair_dup_read_chart(data_readgroup)
-
+        self.__map_pair_dup_read_chart(data_by_readgroup)
 
     def __map_pair_dup_read_chart(self, data_by_sample):
         paired_reads_data = {}
@@ -185,7 +183,7 @@ class DragenMappingMetics(multiqc.modules.base_module.BaseMultiqcModule):
             name="Mapped / paired / duplicated",
             anchor="dragen-mapped-paired-duplicated",
             description="Distribution of reads based on pairing, duplication and mapping.",
-            plot=multiqc.plots.bargraph.plot(
+            plot=bargraph.plot(
                 data_to_plot,
                 category_labels,
                 {
@@ -325,59 +323,114 @@ def parse_mapping_metrics_file(f):
 
     We are reporting summary metrics in the general stats table, and per-read-group in a separate table.
     """
-    data_sample = dict()
-    data_phenotype = collections.defaultdict(dict)
-    data_readgroup = collections.defaultdict(dict)
 
-    phenotype_sample_name_map = dict()
+    s_name = re.search(r"(.*)\.mapping_metrics.csv", f["fn"]).group(1)
 
-    line_token_gen = (line.split(',') for line in f.get('f').splitlines())
-    for line_tokens in line_token_gen:
-        # Get section information
-        section_desc = line_tokens[0]
-        section_desc_re = r'^(TUMOR|NORMAL) MAPPING/ALIGNING (?:PER )?(RG|SUMMARY)$'
-        re_result = re.search(section_desc_re, section_desc)
-        if not re_result:
-            raise ValueError(f'could not get section info from {section_desc}')
-        phenotype = re_result.group(1).lower()
-        stype = re_result.group(2).lower()
+    data_by_sample = defaultdict(dict)
+    data_by_readgroup = defaultdict(dict)
+    data_by_phenotype = defaultdict(dict)
 
-        # Process section entry as required
-        # NOTE(SW): field number is variable and some entries have an additional percentage value
-        # while others do not
-        value_name = line_tokens[2]
-        if stype == 'summary':
-            data_phenotype[phenotype][value_name] = prepare_value(line_tokens[3])
-            if len(line_tokens) > 4:
-                data_phenotype[phenotype][f'{value_name} pct'] = prepare_value(line_tokens[4])
-        elif stype == 'rg':
+    phenotype_sample_name_map = defaultdict(dict)
+    for line in f["f"].splitlines():
+        fields = line.split(",")
+        phenotype = fields[0].split("/")[0].split(" ")[0].lower()  # TUMOR MAPPING -> tumor
+        analysis = fields[0].split("/")[1]  # ALIGNING SUMMARY, ALIGNING PER RG
+        metric = fields[2]
+        value = fields[3]
+        percentage = None
+
+        if len(fields) > 4:  # percentage
+            percentage = fields[4]
+            try:
+                percentage = float(percentage)
+            except ValueError:
+                pass
+
+        if value == "NA":
+            continue
+
+        # sample-unspecific metrics are reported only in ALIGNING SUMMARY sections
+        if analysis == "ALIGNING SUMMARY":
+            data_by_phenotype[phenotype][metric] = prepare_value(value)
+            if percentage is not None:
+                data_by_phenotype[phenotype][metric + " pct"] = prepare_value(percentage)
+
+        # for sample-specific metrics, using ALIGNING PER RG because it has the sample name in the 2nd col
+        if analysis == "ALIGNING PER RG":
+            readgroup = fields[1]
             # Gather identifiers
-            identifiers = line_tokens[1]
-            re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', identifiers)
-            if not re_result:
-                raise ValueError(f'could not get sample name from {identifiers}')
+            re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', readgroup)
             if re_result.group(2) is not None:
                 identifier = f'{re_result.group(1)} ({re_result.group(2)})'
             else:
                 identifier = f'{re_result.group(1)}'
+
             # Get sample name that is associated with phenotype so we can later organise summary
             # data by sample name
-            if phenotype not in phenotype_sample_name_map:
+            if phenotype not in phenotype_sample_name_map.keys():
                 sample_name = re_result.group(1)
                 phenotype_sample_name_map[phenotype] = sample_name
+
             # Resume processing as normal
-            data_readgroup[identifier][value_name] = prepare_value(line_tokens[3])
-            if len(line_tokens) > 4:
-                data_readgroup[identifier][f'{value_name} pct'] = prepare_value(line_tokens[4])
-        else:
-            raise ValueError(f'got bad section type: {stype}')
+            data_by_readgroup[identifier][metric] = prepare_value(value)
+            if percentage is not None:
+                data_by_readgroup[identifier][metric + " pct"] = prepare_value(percentage)
 
     # Organise summary data by sample
-    for phenotype, data in data_phenotype.items():
+    for phenotype, data in data_by_phenotype.items():
         sample_name = phenotype_sample_name_map[phenotype]
-        assert sample_name not in data_sample
-        data_sample[sample_name] = data
-
+        assert sample_name not in data_by_sample
+        data_by_sample[sample_name] = data
+    #
+    # line_token_gen = (line.split(',') for line in f.get('f').splitlines())
+    # for line_tokens in line_token_gen:
+    #     # Get section information
+    #     section_desc = line_tokens[0]
+    #     section_desc_re = r'^(TUMOR|NORMAL) MAPPING/ALIGNING (?:PER )?(RG|SUMMARY)$'
+    #     re_result = re.search(section_desc_re, section_desc)
+    #     if not re_result:
+    #         raise ValueError(f'could not get section info from {section_desc}')
+    #     phenotype = re_result.group(1).lower()
+    #     stype = re_result.group(2).lower()
+    #
+    #     # Process section entry as required
+    #     # NOTE(SW): field number is variable and some entries have an additional percentage value
+    #     # while others do not
+    #     value_name = line_tokens[2]
+    #     if stype == 'summary':
+    #         data_by_phenotype[phenotype][value_name] = prepare_value(line_tokens[3])
+    #         if len(line_tokens) > 4:
+    #             data_by_phenotype[phenotype][f'{value_name} pct'] = prepare_value(line_tokens[4])
+    #     elif stype == 'rg':
+    #         # Gather identifiers
+    #         identifiers = line_tokens[1]
+    #         re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', identifiers)
+    #         if not re_result:
+    #             print(line_tokens)
+    #             print(identifiers)
+    #             raise ValueError(f'could not get sample name from {identifiers}')
+    #         if re_result.group(2) is not None:
+    #             identifier = f'{re_result.group(1)} ({re_result.group(2)})'
+    #         else:
+    #             identifier = f'{re_result.group(1)}'
+    #         # Get sample name that is associated with phenotype so we can later organise summary
+    #         # data by sample name
+    #         if phenotype not in phenotype_sample_name_map:
+    #             sample_name = re_result.group(1)
+    #             phenotype_sample_name_map[phenotype] = sample_name
+    #         # Resume processing as normal
+    #         data_by_readgroup[identifier][value_name] = prepare_value(line_tokens[3])
+    #         if len(line_tokens) > 4:
+    #             data_by_readgroup[identifier][f'{value_name} pct'] = prepare_value(line_tokens[4])
+    #     else:
+    #         raise ValueError(f'got bad section type: {stype}')
+    #
+    # # Organise summary data by sample
+    # for phenotype, data in data_by_phenotype.items():
+    #     sample_name = phenotype_sample_name_map[phenotype]
+    #     assert sample_name not in data_by_sample
+    #     data_by_sample[sample_name] = data
+    #
     # Modify data; removing (unnecessary? broken?) fields, add percentages
     fields_remove = (
         'Number of duplicate marked and mate reads removed',
@@ -386,7 +439,7 @@ def parse_mapping_metrics_file(f):
         'Mismatched bases R2',
         'Soft-clipped bases R2',
     )
-    for data in (*data_readgroup.values(), *data_sample.values()):
+    for data in (*data_by_readgroup.values(), *data_by_sample.values()):
         # Remove fields
         # NOTE(SW): not immediately clear why this is done
         for field in fields_remove:
@@ -394,14 +447,14 @@ def parse_mapping_metrics_file(f):
                 continue
             del data[field]
         # Add alignment percentages
-        if utils.exist_and_number(data, 'Total alignments', 'Secondary alignments') and data['Total alignments'] > 0:
+        if exist_and_number(data, 'Total alignments', 'Secondary alignments') and data['Total alignments'] > 0:
             data['Secondary alignments pct'] = data['Secondary alignments'] / data['Total alignments'] * 100.0
         # Add some missing bases percentages
-        if utils.exist_and_number(data, 'Total bases') and data['Total bases'] > 0:
+        if exist_and_number(data, 'Total bases') and data['Total bases'] > 0:
             for m in ['Q30 bases (excl. dups & clipped bases)', 'Mapped bases R1', 'Mapped bases R2']:
-                if utils.exist_and_number(data, m):
+                if exist_and_number(data, m):
                     data[m + ' pct'] = data[m] / data['Total bases'] * 100.0
-    return data_sample, data_readgroup
+    return data_by_sample, data_by_readgroup
 
 
 def prepare_value(value_str):
@@ -418,7 +471,7 @@ def prepare_value(value_str):
 MAPPING_METRICS = [
     # id_in_data                                                    # title (display name)  # in_genstats  # in_own_tabl # unit  # description
     # Read stats:
-    utils.Metric(
+    Metric(
         "Total input reads",
         "Input reads",
         "#",
@@ -426,17 +479,9 @@ MAPPING_METRICS = [
         "reads",
         "Total number of input reads for this sample (or total number of reads in all input read groups combined), {}",
     ),
-    utils.Metric("Total reads in RG", "Input reads", None, "#", "reads", "Total number of reads in this RG, {}"),
-    utils.Metric(
-        "Average sequenced coverage over genome",
-        "Raw depth",
-        "hid",
-        "#",
-        "x",
-        "Average sequenced coverage over genome, based on all input reads (including duplicate, clipped and low quality bases and reads)",
-    ),
-    utils.Metric("Reads with mate sequenced", "Paired", "hid", "%", "reads", "Number of reads with a mate sequenced, {}"),
-    utils.Metric(
+    Metric("Total reads in RG", "Input reads", None, "#", "reads", "Total number of reads in this RG, {}"),
+    Metric("Reads with mate sequenced", "Paired", "hid", "%", "reads", "Number of reads with a mate sequenced, {}"),
+    Metric(
         "Reads without mate sequenced",
         "Single",
         None,
@@ -445,7 +490,7 @@ MAPPING_METRICS = [
         "Number of reads without a mate sequenced, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "QC-failed reads",
         "QC-fail",
         "hid",
@@ -455,13 +500,15 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric("Mapped reads", "Map", "hid", "hid", "reads", "Number of mapped reads, {}"),
-    utils.Metric("Mapped reads R1", "Map R1", None, "hid", "reads", "Number of mapped reads R1, {}"),
-    utils.Metric("Mapped reads R2", "Map R2", None, "hid", "reads", "Number of mapped reads R2, {}"),
-    utils.Metric("Unmapped reads", "Unmap", "%", "%", "reads", "Number of unmapped reads, {}", the_higher_the_worse=True),
-    utils.Metric("rRNA filtered reads", "rRNA", "%", "%", "reads", "Number of rRNA filtered reads, {}", the_higher_the_worse=True),
-    utils.Metric("Reads with MAPQ [40:inf)", "MQ⩾40", None, "hid", "reads", "Number of reads with MAPQ [40:inf), {}"),
-    utils.Metric(
+    Metric("Mapped reads", "Map", "hid", "hid", "reads", "Number of mapped reads, {}"),
+    Metric("Mapped reads R1", "Map R1", None, "hid", "reads", "Number of mapped reads R1, {}"),
+    Metric("Mapped reads R2", "Map R2", None, "hid", "reads", "Number of mapped reads R2, {}"),
+    Metric("Unmapped reads", "Unmap", "%", "%", "reads", "Number of unmapped reads, {}", the_higher_the_worse=True),
+    Metric(
+        "rRNA filtered reads", "rRNA", "%", "%", "reads", "Number of rRNA filtered reads, {}", the_higher_the_worse=True
+    ),
+    Metric("Reads with MAPQ [40:inf)", "MQ⩾40", None, "hid", "reads", "Number of reads with MAPQ [40:inf), {}"),
+    Metric(
         "Number of duplicate marked reads",
         "Dup",
         "%",
@@ -470,7 +517,7 @@ MAPPING_METRICS = [
         "Number of duplicate marked reads as a result of the --enable-duplicatemarking option being used, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Number of duplicate marked and mate reads removed",
         "Dup with mates removed",
         None,
@@ -480,7 +527,7 @@ MAPPING_METRICS = [
         "when the --remove-duplicates option is used, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Number of unique reads (excl. duplicate marked reads)",
         "Uniq",
         None,
@@ -488,7 +535,7 @@ MAPPING_METRICS = [
         "reads",
         "Number of unique reads (all reads minus duplicate marked reads), {}",
     ),
-    utils.Metric(
+    Metric(
         "Number of unique & mapped reads (excl. duplicate marked reads)",
         "Uniq map",
         "hid",
@@ -496,7 +543,7 @@ MAPPING_METRICS = [
         "reads",
         "Number of unique & mapped reads (mapped reads minus duplicate marked reads), {}",
     ),
-    utils.Metric(
+    Metric(
         "Paired reads (itself & mate mapped)",
         "Self & mate map",
         None,
@@ -504,7 +551,7 @@ MAPPING_METRICS = [
         "reads",
         "Number of reads mapped in pairs (itself & mate mapped), {}",
     ),
-    utils.Metric(
+    Metric(
         "Properly paired reads",
         "Prop pair",
         "%",
@@ -514,7 +561,7 @@ MAPPING_METRICS = [
         "fall within an acceptable range from each other based on the estimated insert length distribution). "
         "Duplicate and low quality reads are not excluded, i.e. the percentage is calculated relative to the total number of reads.",
     ),
-    utils.Metric(
+    Metric(
         "Not properly paired reads (discordant)",
         "Discord",
         "hid",
@@ -524,7 +571,7 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Singleton reads (itself mapped; mate unmapped)",
         "Singleton",
         None,
@@ -534,7 +581,7 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Paired reads mapped to different chromosomes",
         "Diff chrom",
         None,
@@ -544,7 +591,7 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Paired reads mapped to different chromosomes (MAPQ>=10)",
         "Diff chr, MQ⩾10",
         "hid",
@@ -554,7 +601,7 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Reads with indel R1",
         "Reads with indel R1",
         None,
@@ -563,7 +610,7 @@ MAPPING_METRICS = [
         "Number of R1 reads containing at least 1 indel, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Reads with indel R2",
         "Reads with indel R2",
         None,
@@ -573,7 +620,7 @@ MAPPING_METRICS = [
         the_higher_the_worse=True,
     ),
     # Read length stats
-    utils.Metric(
+    Metric(
         "Estimated read length",
         "Read len",
         "hid",
@@ -581,18 +628,18 @@ MAPPING_METRICS = [
         "bp",
         "Estimated read length. Total number of input bases divided by the number of reads",
     ),
-    utils.Metric("Insert length: mean", "Avg IS", "hid", "hid", "bp", "Mean insert size"),
-    utils.Metric("Insert length: median", "Med IS", "#", "#", "bp", "Median insert size", precision=0),
-    utils.Metric(
+    Metric("Insert length: mean", "Avg IS", "hid", "hid", "bp", "Mean insert size"),
+    Metric("Insert length: median", "Med IS", "#", "#", "bp", "Median insert size", precision=0),
+    Metric(
         "Insert length: standard deviation", "IS std", "hid", "hid", "bp", "Standard deviation of insert size deviation"
     ),
     # Bases stats:
-    utils.Metric("Total bases", "Input bases", "hid", "hid", "bases", "Total number of bases sequenced, {}"),
-    utils.Metric("Total bases R1", "Input bases R1", None, "hid", "bases", "Total number of bases sequenced on R1 reads, {}"),
-    utils.Metric("Total bases R2", "Input bases R2", None, "hid", "bases", "Total number of bases sequenced on R2 reads, {}"),
-    utils.Metric("Mapped bases R1", "Mapped bases R1", None, "hid", "bases", "Number of mapped bases on R1 reads, {}"),
-    utils.Metric("Mapped bases R2", "Mapped bases R2", None, "hid", "bases", "Number of mapped bases on R2 reads, {}"),
-    utils.Metric(
+    Metric("Total bases", "Input bases", "hid", "hid", "bases", "Total number of bases sequenced, {}"),
+    Metric("Total bases R1", "Input bases R1", None, "hid", "bases", "Total number of bases sequenced on R1 reads, {}"),
+    Metric("Total bases R2", "Input bases R2", None, "hid", "bases", "Total number of bases sequenced on R2 reads, {}"),
+    Metric("Mapped bases R1", "Mapped bases R1", None, "hid", "bases", "Number of mapped bases on R1 reads, {}"),
+    Metric("Mapped bases R2", "Mapped bases R2", None, "hid", "bases", "Number of mapped bases on R2 reads, {}"),
+    Metric(
         "Soft-clipped bases R1",
         "Soft-clip bases R1",
         None,
@@ -601,7 +648,7 @@ MAPPING_METRICS = [
         "Number of soft-clipped bases on R1 reads, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Soft-clipped bases R2",
         "Soft-clip bases R2",
         None,
@@ -610,7 +657,7 @@ MAPPING_METRICS = [
         "Number of soft-clipped bases on R2 reads, {}",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Mismatched bases R1",
         "MM bases R1",
         None,
@@ -621,7 +668,7 @@ MAPPING_METRICS = [
         "It also does not count a mismatch if either the reference base or read base is N",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Mismatched bases R2",
         "MM bases R2",
         None,
@@ -632,7 +679,7 @@ MAPPING_METRICS = [
         "It also does not count a mismatch if either the reference base or read base is N",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Mismatched bases R1 (excl. indels)",
         "MM bases R1 excl indels",
         None,
@@ -643,7 +690,7 @@ MAPPING_METRICS = [
         "It also does not count a mismatch if either the reference base or read base is N",
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "Mismatched bases R2 (excl. indels)",
         "MM bases R2 excl indels",
         None,
@@ -654,10 +701,10 @@ MAPPING_METRICS = [
         "It also does not count a mismatch if either the reference base or read base is N",
         the_higher_the_worse=True,
     ),
-    utils.Metric("Q30 bases", "Q30", "hid", "hid", "bases", "Number of raw bases with BQ >= 30, {}"),
-    utils.Metric("Q30 bases R1", "Q30 R1", None, "hid", "bases", "Number of raw bases on R1 reads with BQ >= 30, {}"),
-    utils.Metric("Q30 bases R2", "Q30 R2", None, "hid", "bases", "Number of raw bases on R2 reads with BQ >= 30, {}"),
-    utils.Metric(
+    Metric("Q30 bases", "Q30", "hid", "hid", "bases", "Number of raw bases with BQ >= 30, {}"),
+    Metric("Q30 bases R1", "Q30 R1", None, "hid", "bases", "Number of raw bases on R1 reads with BQ >= 30, {}"),
+    Metric("Q30 bases R2", "Q30 R2", None, "hid", "bases", "Number of raw bases on R2 reads with BQ >= 30, {}"),
+    Metric(
         "Q30 bases (excl. dups & clipped bases)",
         "Q30 excl dup & clipped",
         None,
@@ -666,8 +713,8 @@ MAPPING_METRICS = [
         "Number of non-clipped bases with BQ >= 30 on non-duplicate reads, {}",
     ),
     # Alignments stats:
-    utils.Metric("Total alignments", "Alignments", "hid", "#", "reads", "Total number of alignments with MQ > 0, {}"),
-    utils.Metric(
+    Metric("Total alignments", "Alignments", "hid", "#", "reads", "Total number of alignments with MQ > 0, {}"),
+    Metric(
         "Secondary alignments",
         "Sec'ry",
         "hid",
@@ -679,7 +726,7 @@ MAPPING_METRICS = [
         'the others will be marked as "secondary".',
         precision=2,
     ),
-    utils.Metric(
+    Metric(
         "Supplementary (chimeric) alignments",
         "Suppl'ry",
         "hid",
@@ -690,7 +737,7 @@ MAPPING_METRICS = [
         "referred to as the representative alignment, the other are supplementary",
         precision=2,
     ),
-    utils.Metric(
+    Metric(
         "Estimated sample contamination",
         "Contam'n",
         "#",
@@ -700,10 +747,16 @@ MAPPING_METRICS = [
         precision=2,
         the_higher_the_worse=True,
     ),
-    utils.Metric(
+    Metric(
         "rRNA filtered reads", "rRNA", "%", "%", "reads", "Number of rRNA filtered reads, {}", the_higher_the_worse=True
     ),
-    utils.Metric(
-        "Adjustment of reads matching filter contigs", "rRNA / Filtered Contigs", "%", "%", "reads", "Number of filtered reads, {}", the_higher_the_worse=True
+    Metric(
+        "Adjustment of reads matching filter contigs",
+        "rRNA / Filtered Contigs",
+        "%",
+        "%",
+        "reads",
+        "Number of filtered reads, {}",
+        the_higher_the_worse=True,
     ),
 ]

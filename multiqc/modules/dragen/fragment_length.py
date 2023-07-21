@@ -1,39 +1,39 @@
-#!/usr/bin/env python
+# Initialise the logger
 import logging
-import collections
+import re
+from collections import defaultdict
 
-import multiqc.modules.base_module
-import multiqc.plots
+from multiqc.modules.base_module import BaseMultiqcModule
+from multiqc.plots import linegraph
 
-
-LOGGER = logging.getLogger(__name__)
+# Initialise the logger
+log = logging.getLogger(__name__)
 
 
 MIN_CNT_TO_SHOW_ON_PLOT = 5
 
 
-class DragenFragmentLength(multiqc.modules.base_module.BaseMultiqcModule):
-
+class DragenFragmentLength(BaseMultiqcModule):
     def add_fragment_length_hist(self):
-        data_sample = collections.defaultdict(dict)
-        for f in self.find_log_files("dragen/fragment_length_hist"):
-            f_data_sample = parse_fragment_length_hist_file(f)
+        data_by_sample = defaultdict(dict)
 
-            for sample, data in f_data_sample.items():
+        for f in self.find_log_files("dragen/fragment_length_hist"):
+            f_data_by_sample = parse_fragment_length_hist_file(f)
+            for sample, data in f_data_by_sample.items():
                 sample_clean = self.clean_s_name(sample, f)
-                if sample_clean in data_sample:
-                    LOGGER.debug(f'Duplicate sample name found! Overwriting: {sample_clean}')
-                data_sample[sample_clean] = data
+                if sample_clean in data_by_sample:
+                    log.debug(f'Duplicate sample name found! Overwriting: {sample_clean}')
+                data_by_sample[sample_clean] = data
 
         # Filter to strip out ignored sample names:
-        data_sample = self.ignore_samples(data_sample)
+        data_by_sample = self.ignore_samples(data_by_sample)
 
         # Check we have data before proceeding
-        if not data_sample:
+        if not data_by_sample:
             return set()
 
         # Write data to file
-        self.write_data_file(data_sample, "dragen_frag_len")
+        self.write_data_file(data_by_sample, "dragen_frag_len")
 
         smooth_points = 300
         self.add_section(
@@ -46,8 +46,8 @@ class DragenFragmentLength(multiqc.modules.base_module.BaseMultiqcModule):
             """.format(
                 MIN_CNT_TO_SHOW_ON_PLOT
             ),
-            plot=multiqc.plots.linegraph.plot(
-                data_sample,
+            plot=linegraph.plot(
+                data_by_sample,
                 {
                     "id": "dragen_fragment_length",
                     "title": "Dragen: Fragment length hist",
@@ -60,7 +60,7 @@ class DragenFragmentLength(multiqc.modules.base_module.BaseMultiqcModule):
                 },
             ),
         )
-        return data_sample.keys()
+        return data_by_sample.keys()
 
 
 def parse_fragment_length_hist_file(f):
@@ -87,14 +87,15 @@ def parse_fragment_length_hist_file(f):
     39316,0
     39317,1
     """
-    data_sample = collections.defaultdict(dict)
+
+    data_by_sample = defaultdict(dict)
     sample = None
     for line in f.get('f').splitlines():
         if line.startswith('#Sample'):
             sample = line.split(' ', maxsplit=1)[1]
             assert sample is not None
             assert len(sample) > 0
-            assert sample not in data_sample
+            assert sample not in data_by_sample
         elif line == 'FragmentLength,Count':
             continue
         else:
@@ -104,5 +105,5 @@ def parse_fragment_length_hist_file(f):
             # Skip low counts to in order to truncate uninformative long distribution tail
             if count < MIN_CNT_TO_SHOW_ON_PLOT:
                 continue
-            data_sample[sample][fragment_length] = count
-    return data_sample
+            data_by_sample[sample][fragment_length] = count
+    return data_by_sample
