@@ -336,9 +336,17 @@ def parse_mapping_metrics_file(f):
         phenotype = fields[0].split("/")[0].split(" ")[0].lower()  # TUMOR MAPPING -> tumor
         analysis = fields[0].split("/")[1]  # ALIGNING SUMMARY, ALIGNING PER RG
         metric = fields[2]
-        value = fields[3]
-        percentage = None
 
+        value = fields[3]
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            try:
+                value = float(value)
+            except (ValueError, TypeError):
+                pass
+
+        percentage = None
         if len(fields) > 4:  # percentage
             percentage = fields[4]
             try:
@@ -351,9 +359,9 @@ def parse_mapping_metrics_file(f):
 
         # sample-unspecific metrics are reported only in ALIGNING SUMMARY sections
         if analysis == "ALIGNING SUMMARY":
-            data_by_phenotype[phenotype][metric] = prepare_value(value)
+            data_by_phenotype[phenotype][metric] = value
             if percentage is not None:
-                data_by_phenotype[phenotype][metric + " pct"] = prepare_value(percentage)
+                data_by_phenotype[phenotype][metric + " pct"] = percentage
 
         # for sample-specific metrics, using ALIGNING PER RG because it has the sample name in the 2nd col
         if analysis == "ALIGNING PER RG":
@@ -372,9 +380,9 @@ def parse_mapping_metrics_file(f):
                 phenotype_sample_name_map[phenotype] = sample_name
 
             # Resume processing as normal
-            data_by_readgroup[identifier][metric] = prepare_value(value)
+            data_by_readgroup[identifier][metric] = value
             if percentage is not None:
-                data_by_readgroup[identifier][metric + " pct"] = prepare_value(percentage)
+                data_by_readgroup[identifier][metric + " pct"] = percentage
 
     # Organise summary data by sample
     for phenotype, data in data_by_phenotype.items():
@@ -455,17 +463,6 @@ def parse_mapping_metrics_file(f):
                 if exist_and_number(data, m):
                     data[m + ' pct'] = data[m] / data['Total bases'] * 100.0
     return data_by_sample, data_by_readgroup
-
-
-def prepare_value(value_str):
-    try:
-        return int(value_str)
-    except ValueError:
-        pass
-    try:
-        return float(value_str)
-    except ValueError:
-        return value_str
 
 
 MAPPING_METRICS = [
