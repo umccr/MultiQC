@@ -389,56 +389,7 @@ def parse_mapping_metrics_file(f):
         sample_name = phenotype_sample_name_map[phenotype]
         assert sample_name not in data_by_sample
         data_by_sample[sample_name] = data
-    #
-    # line_token_gen = (line.split(',') for line in f.get('f').splitlines())
-    # for line_tokens in line_token_gen:
-    #     # Get section information
-    #     section_desc = line_tokens[0]
-    #     section_desc_re = r'^(TUMOR|NORMAL) MAPPING/ALIGNING (?:PER )?(RG|SUMMARY)$'
-    #     re_result = re.search(section_desc_re, section_desc)
-    #     if not re_result:
-    #         raise ValueError(f'could not get section info from {section_desc}')
-    #     phenotype = re_result.group(1).lower()
-    #     stype = re_result.group(2).lower()
-    #
-    #     # Process section entry as required
-    #     # NOTE(SW): field number is variable and some entries have an additional percentage value
-    #     # while others do not
-    #     value_name = line_tokens[2]
-    #     if stype == 'summary':
-    #         data_by_phenotype[phenotype][value_name] = prepare_value(line_tokens[3])
-    #         if len(line_tokens) > 4:
-    #             data_by_phenotype[phenotype][f'{value_name} pct'] = prepare_value(line_tokens[4])
-    #     elif stype == 'rg':
-    #         # Gather identifiers
-    #         identifiers = line_tokens[1]
-    #         re_result = re.search(r'^sample:(.+?)(?:;readgroup:(.+))?$', identifiers)
-    #         if not re_result:
-    #             print(line_tokens)
-    #             print(identifiers)
-    #             raise ValueError(f'could not get sample name from {identifiers}')
-    #         if re_result.group(2) is not None:
-    #             identifier = f'{re_result.group(1)} ({re_result.group(2)})'
-    #         else:
-    #             identifier = f'{re_result.group(1)}'
-    #         # Get sample name that is associated with phenotype so we can later organise summary
-    #         # data by sample name
-    #         if phenotype not in phenotype_sample_name_map:
-    #             sample_name = re_result.group(1)
-    #             phenotype_sample_name_map[phenotype] = sample_name
-    #         # Resume processing as normal
-    #         data_by_readgroup[identifier][value_name] = prepare_value(line_tokens[3])
-    #         if len(line_tokens) > 4:
-    #             data_by_readgroup[identifier][f'{value_name} pct'] = prepare_value(line_tokens[4])
-    #     else:
-    #         raise ValueError(f'got bad section type: {stype}')
-    #
-    # # Organise summary data by sample
-    # for phenotype, data in data_by_phenotype.items():
-    #     sample_name = phenotype_sample_name_map[phenotype]
-    #     assert sample_name not in data_by_sample
-    #     data_by_sample[sample_name] = data
-    #
+
     # Modify data; removing (unnecessary? broken?) fields, add percentages
     fields_remove = (
         'Number of duplicate marked and mate reads removed',
