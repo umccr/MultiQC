@@ -6,6 +6,13 @@
 
 &nbsp;
 
+<h3 align='center'>Fork releases</h3>
+
+| MultiQC&#160;base | Version name (GH&#160;tag&#160;linked) | Notes |
+| ---               | ---                                    | ---   |
+| 1.14              | [`1.14+umccrise.0.0.14`](https://github.com/umccr/MultiQC/releases/tag/1.14%2Bumccrise.0.0.14) | Changes made for `1.13dev+umccrise.0.0.1` in the *umccrise* branch were forcefully rebased on top of MultiQC 1.14, overwritting existing history. |
+| 1.13dev           | [`1.13dev+umccrise.0.0.1`](https://github.com/umccr/MultiQC/releases/tag/1.13dev%2Bumccrise.0.0.1) | |
+
 ---
 
 ### Aggregate bioinformatics results across many samples into a single report
